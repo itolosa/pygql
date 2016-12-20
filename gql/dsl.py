@@ -186,7 +186,8 @@ class DSLField(object):
 
     def inflate(self, value):
         if not self.has_selections:
-            return value
+            parse_value = get_parse_value(self.field.type)
+            return parse_value(value)
 
         assert isinstance(value, dict)
 
@@ -285,6 +286,17 @@ def get_arg_serializer(arg_type):
     if isinstance(arg_type, GraphQLEnumType):
         return lambda value: ast.EnumValue(value=arg_type.serialize(value))
     return arg_type.serialize
+
+
+def get_parse_value(arg_type):
+    if isinstance(arg_type, GraphQLNonNull):
+        return get_arg_serializer(arg_type.of_type)
+    if isinstance(arg_type, GraphQLList):
+        inner_serializer = get_arg_serializer(arg_type.of_type)
+        return partial(serialize_list, inner_serializer)
+    if isinstance(arg_type, GraphQLEnumType):
+        return lambda value: ast.EnumValue(value=arg_type.parse_value(value))
+    return arg_type.parse_value
 
 
 def get_base_type(type):

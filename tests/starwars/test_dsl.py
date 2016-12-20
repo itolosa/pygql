@@ -278,7 +278,8 @@ luke: human {
 #     assert not result.errors
 #     assert result.data == expected
 
-
+from datetime import datetime
+from pytz import timezone
 
 def test_hero_name_query(ds):
     Query, Character = ds.Query, ds.Character
@@ -292,3 +293,16 @@ def test_hero_name_query(ds):
     assert isinstance(result, Query)
     assert isinstance(result.hero, Character)
     assert result.hero.name == 'R2-D2'
+
+
+def test_hero_name_query(ds):
+    Query, Character = ds.Query, ds.Character
+
+    my_birthday = datetime(year=1988, month=11, day=7, tzinfo=timezone('UTC'))
+
+    result = ds.query(
+        Query.date(date=my_birthday),
+    ).execute()
+
+    assert isinstance(result.date, datetime)
+    assert result.date == my_birthday

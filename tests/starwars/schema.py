@@ -4,6 +4,7 @@ from graphql.type import (GraphQLArgument, GraphQLEnumType, GraphQLEnumValue,
                           GraphQLString)
 
 from .fixtures import getDroid, getFriends, getHero, getHuman
+from .scalardate import DateTime
 
 episodeEnum = GraphQLEnumType(
     'Episode',
@@ -109,6 +110,13 @@ droidType = GraphQLObjectType(
 queryType = GraphQLObjectType(
     'Query',
     fields=lambda: {
+        'date': GraphQLField(
+            DateTime,
+            args={
+                'date': GraphQLArgument(DateTime)
+            },
+            resolver=lambda root, args, *_: args.get('date'),
+        ),
         'hero': GraphQLField(
             characterInterface,
             args={
