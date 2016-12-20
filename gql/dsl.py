@@ -109,9 +109,13 @@ class DSLOperation(object):
         self.dsl_type = getattr(self.dsl, self.type.name)
         self.operation = 'query'
 
-    def select(self, *fields):
+    def select(self, *fields, **fields_with_alias):
         instance = self._clone()
         instance.selections.extend(fields)
+        for alias, field in fields_with_alias.items():
+            instance.selections.append(
+                field.alias(alias)
+            )
         return instance
 
     def __call__(self, *fields):
@@ -171,9 +175,13 @@ class DSLField(object):
         self._args = {}
         self._as = None
 
-    def select(self, *fields):
+    def select(self, *fields, **fields_with_alias):
         instance = self._clone()
         instance.selections.extend(fields)
+        for alias, field in fields_with_alias.items():
+            instance.selections.append(
+                field.alias(alias)
+            )
         return instance
 
     def __call__(self, *args, **kwargs):

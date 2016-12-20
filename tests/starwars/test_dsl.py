@@ -157,6 +157,18 @@ luke: human {
     assert query == str(query_dsl)
 
 
+def test_fetch_alias_as_keyword(ds):
+    query = '''
+human {
+  my_name: name
+}
+    '''.strip()
+    query_dsl = ds.Query.human.select(
+        my_name=ds.Character.name,
+    )
+    assert query == str(query_dsl)
+
+
 # def test_fetch_luke_and_leia_aliased():
 #     query = '''
 #         query FetchLukeAndLeiaAliased {
