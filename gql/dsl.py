@@ -97,7 +97,7 @@ def fragment(operation_or_field):
         _type.name,
         [f.attr for f in selections]
     )
-    return type(_type.name, (fragment_basetype, dsl_type), {'_dsl_type': dsl_type})
+    return type(str(_type.name), (fragment_basetype, dsl_type), {'_dsl_type': dsl_type})
 
 
 class DSLOperation(object):
@@ -110,8 +110,9 @@ class DSLOperation(object):
         self.operation = 'query'
 
     def select(self, *fields):
-        self.selections.extend(fields)
-        return self
+        instance = self._clone()
+        instance.selections.extend(fields)
+        return instance
 
     def __call__(self, *fields):
         return self.select(*fields)
@@ -149,6 +150,14 @@ class DSLOperation(object):
         ast = self.ast()
         result = self.dsl.execute(ast, *args, **kwargs)
         return self.inflate(result)
+
+    def _clone(self):
+        instance = DSLOperation(
+            self.type,
+            self.dsl
+        )
+        instance.selections = copy.deepcopy(self.selections)
+        return instance
 
 
 class DSLField(object):
