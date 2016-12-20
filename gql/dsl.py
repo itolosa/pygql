@@ -6,7 +6,9 @@ import six
 from graphql.language import ast
 from graphql.language.printer import print_ast
 from graphql.type import (GraphQLField, GraphQLList,
-                          GraphQLNonNull, GraphQLEnumType)
+                          GraphQLNonNull, GraphQLEnumType,
+                          GraphQLObjectType, GraphQLInterfaceType,
+                          GraphQLUnionType)
 
 from .utils import to_camel_case
 
@@ -53,11 +55,6 @@ class DSLType(object):
         raise KeyError('Field {} doesnt exist in type {}.'.format(name, self.type.name))
 
 
-def selections(*fields):
-    for _field in fields:
-        yield field(_field).ast
-
-
 def get_ast_value(value):
     if isinstance(value, ast.Node):
         return value
@@ -71,55 +68,68 @@ def get_ast_value(value):
         return ast.IntValue(value=value)
     return None
 
+_TYPENAME = ast.Field(name=ast.Name(value='__typename'))
 
 class DSLField(object):
 
     def __init__(self, name, field):
+        self.name = name
         self.field = field
-        self.ast_field = ast.Field(name=ast.Name(value=name), arguments=[])
-        self.selection_set = None
+        self.base_type = get_base_type(field.type)
+        self.selections = []
+        self._args = {}
+        self._as = None
 
     def select(self, *fields):
-        if not self.ast_field.selection_set:
-            self.ast_field.selection_set = ast.SelectionSet(selections=[])
-        self.ast_field.selection_set.selections.extend(selections(*fields))
+        self.selections.extend(fields)
         return self
 
     def __call__(self, *args, **kwargs):
         return self.args(*args, **kwargs)
 
     def alias(self, alias):
-        self.ast_field.alias = ast.Name(value=alias)
+        self._as = alias
         return self
 
     def args(self, **args):
-        for name, value in args.items():
+        self._args.update(args)
+        return self
+
+    def ast(self, with_typename=False):
+        
+        alias = self._as and ast.Name(value=self._as)
+        arguments = []
+        selection_set = None
+        if isinstance(self.base_type, (GraphQLObjectType, GraphQLInterfaceType)):
+            selections = [field.ast(with_typename) for field in self.selections]
+            if with_typename:
+                selections = [_TYPENAME] + selections
+            selection_set = ast.SelectionSet(
+                selections=selections
+            )
+
+        for name, value in self._args.items():
             arg = self.field.args.get(name)
             arg_type_serializer = get_arg_serializer(arg.type)
             value = arg_type_serializer(value)
-            self.ast_field.arguments.append(
+            arguments.append(
                 ast.Argument(
                     name=ast.Name(value=name),
                     value=get_ast_value(value)
                 )
             )
-        return self
 
-    @property
-    def ast(self):
-        return self.ast_field
+        ast_field = ast.Field(
+            name=ast.Name(value=self.name),
+            arguments=arguments,
+            alias=alias,
+            selection_set=selection_set
+        )
+
+        return ast_field
 
     def __str__(self):
-        return print_ast(self.ast_field)
-
-
-def field(field, **args):
-    if isinstance(field, GraphQLField):
-        return DSLField(field).args(**args)
-    elif isinstance(field, DSLField):
-        return field
-
-    raise Exception('Received incompatible query field: "{}".'.format(field))
+        return print_ast(self.ast())
 
 
 def query(*fields):
@@ -127,7 +137,7 @@ def query(*fields):
         definitions=[ast.OperationDefinition(
             operation='query',
             selection_set=ast.SelectionSet(
-                selections=list(selections(*fields))
+                selections=[field.ast(True) for field in fields]
             )
         )]
     )
@@ -147,6 +157,12 @@ def get_arg_serializer(arg_type):
     if isinstance(arg_type, GraphQLEnumType):
         return lambda value: ast.EnumValue(value=arg_type.serialize(value))
     return arg_type.serialize
+
+
+def get_base_type(type):
+    if isinstance(type, (GraphQLList, GraphQLNonNull)):
+        return get_base_type(type.of_type)
+    return type
 
 
 def var(name):
