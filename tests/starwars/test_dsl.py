@@ -147,11 +147,11 @@ human(id: "1000") {
 
 def test_fetch_luke_aliased(ds):
     query = '''
-luke: human(id: "1000") {
+luke: human {
   name
 }
     '''.strip()
-    query_dsl = ds.Query.human.args(id=1000).alias('luke').select(
+    query_dsl = ds.Query.human.alias('luke').select(
         ds.Character.name,
     )
     assert query == str(query_dsl)
@@ -281,14 +281,14 @@ luke: human(id: "1000") {
 
 
 def test_hero_name_query(ds):
+    Query, Character = ds.Query, ds.Character
+
     result = ds.query(
-        ds.Query.hero.select(
-            ds.Character.name
+        Query.hero.select(
+            Character.name
         )
-    )
-    expected = {
-        'hero': {
-            'name': 'R2-D2'
-        }
-    }
-    assert result == expected
+    ).execute()
+
+    assert isinstance(result, Query)
+    assert isinstance(result.hero, Character)
+    assert result.hero.name == 'R2-D2'
