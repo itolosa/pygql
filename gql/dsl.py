@@ -38,7 +38,7 @@ class DSLSchema(object):
                 attr_name = to_snake_case(name)
             else:
                 attr_name = name
-            fields[attr_name] = DSLField(name, field_def, self)
+            fields[attr_name] = DSLField(name, field_def, self, attr_name)
 
         return type(str(type_def.name), (object,), fields)
 
@@ -93,9 +93,10 @@ def fragment(operation_or_field):
     selections = operation_or_field.selections
     dsl_type = operation_or_field.dsl_type
 
+    print [f.attrn for f in selections]
     fragment_basetype = collections.namedtuple(
         _type.name,
-        [f.attr for f in selections]
+        [f.attrn for f in selections]
     )
     return type(str(_type.name), (fragment_basetype, dsl_type), {'_dsl_type': dsl_type})
 
@@ -146,7 +147,7 @@ class DSLOperation(object):
         kwargs = {}
         for selection in self.selections:
             attr = selection.attr
-            kwargs[attr] = selection.inflate(value.get(attr))
+            kwargs[selection.attrn] = selection.inflate(value.get(attr))
 
         return self.fragment(**kwargs)
 
@@ -166,11 +167,12 @@ class DSLOperation(object):
 
 class DSLField(object):
 
-    def __init__(self, name=None, field=None, dsl=None):
+    def __init__(self, name=None, field=None, dsl=None, attr_name=None):
         self.dsl = dsl
         self.name = name
         self.field = field
         self.type = get_base_type(field.type)
+        self.attr_name = attr_name
         self.selections = []
         self._args = {}
         self._as = None
@@ -190,6 +192,10 @@ class DSLField(object):
     @property
     def attr(self):
         return self._as or self.name
+
+    @property
+    def attrn(self):
+        return self._as or self.attr_name
 
     def alias(self, alias):
         instance = self._clone()
@@ -211,7 +217,7 @@ class DSLField(object):
         kwargs = {}
         for selection in self.selections:
             attr = selection.attr
-            kwargs[attr] = selection.inflate(value.get(attr))
+            kwargs[selection.attrn] = selection.inflate(value.get(attr))
 
         return self.fragment(**kwargs)
 
@@ -270,7 +276,8 @@ class DSLField(object):
         instance = DSLField(
             self.name,
             self.field,
-            self.dsl
+            self.dsl,
+            self.attr_name
         )
         instance.selections = copy.deepcopy(self.selections)
         instance._args = copy.copy(self._args)
