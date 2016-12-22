@@ -38,38 +38,19 @@ class DSLSchema(object):
                 attr_name = to_snake_case(name)
             else:
                 attr_name = name
-            fields[attr_name] = DSLField(name, field_def, self, attr_name)
+
+            field_base_type = get_base_type(field_def.type)
+            # print isinstance(field_base_type, (GraphQLObjectType, GraphQLInterfaceType)), field_base_type
+            if isinstance(field_base_type, (GraphQLObjectType, GraphQLInterfaceType)):
+                dsl_field = DSLSelectionField(name, field_base_type, field_def, self, attr_name)
+            else:
+                dsl_field = DSLField(name, field_base_type, field_def, self, attr_name)
+            fields[attr_name] = dsl_field
 
         return type(str(type_def.name), (object,), fields)
 
-    # def query(self, *args, **kwargs):
-    #     return self.execute(query(*args, **kwargs))
-
-    # def mutate(self, *args, **kwargs):
-    #     return self.query(*args, operation='mutate', **kwargs)
-
     def execute(self, document):
         return self.client.execute(document)
-
-
-# class DSLType(object):
-#     def __init__(self, type):
-#         self.type = type
-
-#     def __getattr__(self, name):
-#         formatted_name, field_def = self.get_field(name)
-#         return DSLField(formatted_name, field_def)
-
-    # def get_field(self, name):
-    #     camel_cased_name = to_camel_case(name)
-
-    #     if name in self.type.fields:
-    #         return name, self.type.fields[name]
-
-    #     if camel_cased_name in self.type.fields:
-    #         return camel_cased_name, self.type.fields[camel_cased_name]
-
-    #     raise KeyError('Field {} doesnt exist in type {}.'.format(name, self.type.name))
 
 
 def get_ast_value(value):
@@ -91,8 +72,10 @@ _TYPENAME = ast.Field(name=ast.Name(value='__typename'))
 
 class DSLSelection(object):
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         self.selections = []
+        super(DSLSelection, self).__init__(*args, **kwargs)
+
 
     def select(self, *fields, **fields_with_alias):
         instance = self._clone()
@@ -102,6 +85,16 @@ class DSLSelection(object):
                 field.alias(alias)
             )
         return instance
+
+    def inflate(self, value):
+        assert isinstance(value, dict)
+
+        kwargs = {}
+        for selection in self.selections:
+            attr = selection.attr
+            kwargs[selection.attrn] = selection.inflate(value.get(attr))
+
+        return self.fragment(**kwargs)
 
     @property
     def fragment(self):
@@ -115,7 +108,6 @@ class DSLSelection(object):
         # We construct a type which inherits the dsl_type (so we can do isinstance(x, dsl_type))
         # And the created fragment type
         return type(type_name, (fragment_basetype, dsl_type), {'_dsl_type': dsl_type})
-
 
     @property
     def ast_selection(self):
@@ -146,16 +138,6 @@ class DSLOperation(DSLSelection):
             )]
         )
 
-    def inflate(self, value):
-        assert isinstance(value, dict)
-
-        kwargs = {}
-        for selection in self.selections:
-            attr = selection.attr
-            kwargs[selection.attrn] = selection.inflate(value.get(attr))
-
-        return self.fragment(**kwargs)
-
     def execute(self, *args, **kwargs):
         ast = self.ast
         result = self.dsl.execute(ast, *args, **kwargs)
@@ -170,13 +152,13 @@ class DSLOperation(DSLSelection):
         return instance
 
 
-class DSLField(DSLSelection):
+class DSLField(object):
 
-    def __init__(self, name=None, field=None, dsl=None, attr_name=None):
+    def __init__(self, name=None, type=None, field=None, dsl=None, attr_name=None):
         self.dsl = dsl
         self.name = name
         self.field = field
-        self.type = get_base_type(field.type)
+        self.type = type
         self.attr_name = attr_name
         self._args = {}
         self._as = None
@@ -184,6 +166,9 @@ class DSLField(DSLSelection):
 
     def __call__(self, *args, **kwargs):
         return self.args(*args, **kwargs)
+
+    def inflate(self, value):
+        return value
 
     @property
     def attr(self):
@@ -203,42 +188,14 @@ class DSLField(DSLSelection):
         instance._args.update(args)
         return instance
 
-    def inflate(self, value):
-        if not self.has_selections:
-            parse_value = get_parse_value(self.field.type)
-            return parse_value(value)
-
-        assert isinstance(value, dict)
-
-        kwargs = {}
-        for selection in self.selections:
-            attr = selection.attr
-            kwargs[selection.attrn] = selection.inflate(value.get(attr))
-
-        return self.fragment(**kwargs)
-
-    @property
-    def has_selections(self):
-        return isinstance(self.type, (GraphQLObjectType, GraphQLInterfaceType))
-
-    @property
-    def dsl_type(self):
-        if not self.has_selections:
-            return
-        return getattr(self.dsl, self.type.name)
-
     @property
     def ast(self):
-        
         alias = self._as and ast.Name(value=self._as)
         arguments = []
-        selection_set = None
-        if self.has_selections:
-            selection_set = self.ast_selection
 
         for name, value in self._args.items():
             arg = self.field.args.get(name)
-            arg_type_serializer = get_arg_serializer(arg.type)
+            arg_type_serializer = get_serializer(arg.type)
             value = arg_type_serializer(value)
             arguments.append(
                 ast.Argument(
@@ -247,41 +204,43 @@ class DSLField(DSLSelection):
                 )
             )
 
-        ast_field = ast.Field(
+        return ast.Field(
             name=ast.Name(value=self.name),
             arguments=arguments,
             alias=alias,
-            selection_set=selection_set
         )
-
-        return ast_field
 
     def __str__(self):
         return print_ast(self.ast)
 
     def _clone(self):
-        instance = DSLField(
+        instance = self.__class__(
             self.name,
+            self.type,
             self.field,
             self.dsl,
             self.attr_name
         )
-        instance.selections = copy.deepcopy(self.selections)
         instance._args = copy.copy(self._args)
         instance._as = copy.copy(self._as)
         return instance
 
 
+class DSLSelectionField(DSLSelection, DSLField):
+    @property
+    def dsl_type(self):
+        return getattr(self.dsl, self.type.name)
 
-def query(*fields):
-    return ast.Document(
-        definitions=[ast.OperationDefinition(
-            operation='query',
-            selection_set=ast.SelectionSet(
-                selections=[_TYPENAME] + [field.ast(True) for field in fields]
-            )
-        )]
-    )
+    @property
+    def ast(self):
+        ast_field = super(DSLSelectionField, self).ast
+        ast_field.selection_set = self.ast_selection
+        return ast_field
+
+    def _clone(self):
+        instance = super(DSLSelectionField, self)._clone()
+        instance.selections = copy.deepcopy(self.selections)
+        return instance
 
 
 def serialize_list(serializer, values):
@@ -289,26 +248,26 @@ def serialize_list(serializer, values):
     return [serializer(v) for v in values]
 
 
-def get_arg_serializer(arg_type):
-    if isinstance(arg_type, GraphQLNonNull):
-        return get_arg_serializer(arg_type.of_type)
-    if isinstance(arg_type, GraphQLList):
-        inner_serializer = get_arg_serializer(arg_type.of_type)
+def get_serializer(_type):
+    if isinstance(_type, GraphQLNonNull):
+        return get_serializer(_type.of_type)
+    if isinstance(_type, GraphQLList):
+        inner_serializer = get_serializer(_type.of_type)
         return partial(serialize_list, inner_serializer)
-    if isinstance(arg_type, GraphQLEnumType):
-        return lambda value: ast.EnumValue(value=arg_type.serialize(value))
-    return arg_type.serialize
+    if isinstance(_type, GraphQLEnumType):
+        return lambda value: ast.EnumValue(value=_type.serialize(value))
+    return _type.serialize
 
 
-def get_parse_value(arg_type):
-    if isinstance(arg_type, GraphQLNonNull):
-        return get_arg_serializer(arg_type.of_type)
-    if isinstance(arg_type, GraphQLList):
-        inner_serializer = get_arg_serializer(arg_type.of_type)
+def get_parse_value(_type):
+    if isinstance(_type, GraphQLNonNull):
+        return get_parse_value(_type.of_type)
+    if isinstance(_type, GraphQLList):
+        inner_serializer = get_parse_value(_type.of_type)
         return partial(serialize_list, inner_serializer)
-    if isinstance(arg_type, GraphQLEnumType):
-        return lambda value: ast.EnumValue(value=arg_type.parse_value(value))
-    return arg_type.parse_value
+    if isinstance(_type, GraphQLEnumType):
+        return lambda value: ast.EnumValue(value=_type.parse_value(value))
+    return _type.parse_value
 
 
 def get_base_type(type):
