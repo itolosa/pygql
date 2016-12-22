@@ -7,8 +7,12 @@ from .schema import StarWarsSchema
 
 
 @pytest.fixture
-def ds():
-    client = Client(schema=StarWarsSchema)
+def client():
+    return Client(schema=StarWarsSchema)
+
+
+@pytest.fixture
+def ds(client):
     ds = DSLSchema(client)
     return ds
 
@@ -293,14 +297,14 @@ human {
 from datetime import datetime
 from pytz import timezone
 
-def test_hero_name_query(ds):
+def test_hero_name_query_basic(ds):
     Query, Character = ds.Query, ds.Character
 
     result = ds.query(
         Query.hero.select(
             Character.name
         )
-    ).execute()
+    )
 
     assert isinstance(result, Query)
     assert isinstance(result.hero, Character)
@@ -314,7 +318,7 @@ def test_hero_name_query(ds):
 
     result = ds.query(
         Query.date(date=my_birthday),
-    ).execute()
+    )
 
     assert isinstance(result.date, datetime)
     assert result.date == my_birthday

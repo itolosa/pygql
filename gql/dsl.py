@@ -88,27 +88,11 @@ def get_ast_value(value):
 _TYPENAME = ast.Field(name=ast.Name(value='__typename'))
 
 
-def fragment(operation_or_field):
-    _type = operation_or_field.type
-    selections = operation_or_field.selections
-    dsl_type = operation_or_field.dsl_type
 
-    print [f.attrn for f in selections]
-    fragment_basetype = collections.namedtuple(
-        _type.name,
-        [f.attrn for f in selections]
-    )
-    return type(str(_type.name), (fragment_basetype, dsl_type), {'_dsl_type': dsl_type})
+class DSLSelection(object):
 
-
-class DSLOperation(object):
-
-    def __init__(self, type, dsl):
-        self.dsl = dsl
+    def __init__(self):
         self.selections = []
-        self.type = type
-        self.dsl_type = getattr(self.dsl, self.type.name)
-        self.operation = 'query'
 
     def select(self, *fields, **fields_with_alias):
         instance = self._clone()
@@ -119,25 +103,46 @@ class DSLOperation(object):
             )
         return instance
 
-    def __call__(self, *fields):
-        return self.select(*fields)
-
     @property
     def fragment(self):
-        return fragment(self)
+        dsl_type = self.dsl_type
+        type_name = str(self.type.name)
+        # We create a type with the fields same as the selections
+        fragment_basetype = collections.namedtuple(
+            type_name,
+            [f.attrn for f in self.selections]
+        )
+        # We construct a type which inherits the dsl_type (so we can do isinstance(x, dsl_type))
+        # And the created fragment type
+        return type(type_name, (fragment_basetype, dsl_type), {'_dsl_type': dsl_type})
 
-    def ast(self, with_typename=False):
-        selections = [field.ast(with_typename) for field in self.selections]
 
-        if with_typename:
-            selections = [_TYPENAME] + selections
+    @property
+    def ast_selection(self):
+        return ast.SelectionSet(
+            selections=[field.ast for field in self.selections]
+        )
 
+
+class DSLOperation(DSLSelection):
+
+    def __init__(self, type, dsl):
+        self.dsl = dsl
+        self.selections = []
+        self.type = type
+        self.dsl_type = getattr(self.dsl, self.type.name)
+        self.operation = 'query'
+        super(DSLOperation, self).__init__()
+
+    def __call__(self, *fields, **kwargs):
+        return self.select(*fields).execute(**kwargs)
+
+    @property
+    def ast(self):
         return ast.Document(
             definitions=[ast.OperationDefinition(
                 operation=self.operation,
-                selection_set=ast.SelectionSet(
-                    selections=selections
-                )
+                selection_set=self.ast_selection
             )]
         )
 
@@ -152,7 +157,7 @@ class DSLOperation(object):
         return self.fragment(**kwargs)
 
     def execute(self, *args, **kwargs):
-        ast = self.ast()
+        ast = self.ast
         result = self.dsl.execute(ast, *args, **kwargs)
         return self.inflate(result)
 
@@ -165,7 +170,7 @@ class DSLOperation(object):
         return instance
 
 
-class DSLField(object):
+class DSLField(DSLSelection):
 
     def __init__(self, name=None, field=None, dsl=None, attr_name=None):
         self.dsl = dsl
@@ -173,18 +178,9 @@ class DSLField(object):
         self.field = field
         self.type = get_base_type(field.type)
         self.attr_name = attr_name
-        self.selections = []
         self._args = {}
         self._as = None
-
-    def select(self, *fields, **fields_with_alias):
-        instance = self._clone()
-        instance.selections.extend(fields)
-        for alias, field in fields_with_alias.items():
-            instance.selections.append(
-                field.alias(alias)
-            )
-        return instance
+        super(DSLField, self).__init__()
 
     def __call__(self, *args, **kwargs):
         return self.args(*args, **kwargs)
@@ -232,21 +228,13 @@ class DSLField(object):
         return getattr(self.dsl, self.type.name)
 
     @property
-    def fragment(self):
-        return fragment(self)
-
-    def ast(self, with_typename=False):
+    def ast(self):
         
         alias = self._as and ast.Name(value=self._as)
         arguments = []
         selection_set = None
         if self.has_selections:
-            selections = [field.ast(with_typename) for field in self.selections]
-            if with_typename:
-                selections = [_TYPENAME] + selections
-            selection_set = ast.SelectionSet(
-                selections=selections
-            )
+            selection_set = self.ast_selection
 
         for name, value in self._args.items():
             arg = self.field.args.get(name)
@@ -269,8 +257,7 @@ class DSLField(object):
         return ast_field
 
     def __str__(self):
-        return print_ast(self.ast())
-
+        return print_ast(self.ast)
 
     def _clone(self):
         instance = DSLField(
@@ -283,6 +270,7 @@ class DSLField(object):
         instance._args = copy.copy(self._args)
         instance._as = copy.copy(self._as)
         return instance
+
 
 
 def query(*fields):
